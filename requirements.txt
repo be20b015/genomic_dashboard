@@ -1,0 +1,14 @@
+streamlit>=1.32
+biopython>=1.83
+pandas>=2.2
+numpy>=1.26
+plotly>=5.20
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+requests>=2.31
+
+# Foundation model stack (large downloads — install only if you need
+# embedding / AI-driven sequence analysis, see README "AI Model" section)
+transformers>=4.40
+torch>=2.2
