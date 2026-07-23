@@ -10,11 +10,19 @@ there's nothing extra to install beyond `requests`.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import time
 from typing import Optional
 
 import requests
+
+try:
+    from google import genai
+    from google.genai import types
+    GENAI_AVAILABLE = True
+except ImportError:
+    GENAI_AVAILABLE = False
 
 SYSTEM_INSTRUCTION = (
     "You are a genomics analyst. Analyze the given genomic KPIs and "
@@ -217,6 +225,88 @@ def get_insights_claude(kpi_summary: dict, extra_context: str = "", api_key: Opt
             raise RuntimeError(f"Failed to connect to Claude API: {str(e)}")
     
     raise RuntimeError(f"Failed to get AI insights after {max_attempts} attempts")
+
+
+def analyze_fasta_sequence(fasta_header: str, dna_sequence: str, api_key: Optional[str] = None) -> dict:
+    """
+    Analyze a FASTA DNA sequence using Gemini API with structured JSON output.
+    Returns a dictionary with sequence metadata, composition, ORFs, features, and quality warnings.
+    """
+    if not GENAI_AVAILABLE:
+        raise RuntimeError(
+            "google-genai SDK not installed. Install with: pip install google-genai"
+        )
+    
+    api_key = _get_secret_value("GEMINI_API_KEY", api_key)
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY not set")
+    
+    # Generate cache key from sequence and header
+    cache_key = _get_cache_key({"fasta_header": fasta_header}, dna_sequence[:500], "fasta_analysis")
+    cached_result = _get_cached_insight(cache_key, max_age=7200)  # 2 hour cache for sequence data
+    if cached_result:
+        return json.loads(cached_result)
+    
+    # Throttle requests
+    _throttle_request("fasta-analysis")
+    
+    # Truncate sequence for API (max 3000bp for prompt efficiency)
+    sequence_display = dna_sequence[:3000]
+    if len(dna_sequence) > 3000:
+        sequence_display += f"... [truncated, original length: {len(dna_sequence)} bp]"
+    
+    prompt = f"""
+    You are an expert bioinformaticist API. Analyze the following FASTA DNA sequence:
+    
+    Header: {fasta_header}
+    Sequence: {sequence_display}
+    
+    Return a structured JSON object containing:
+    1. sequence_metadata: object with organism_guess, genome_type (e.g., ssRNA provirus, dsDNA plasmid), sequence_length_bp.
+    2. nucleotide_composition: object with estimated_gc_content_pct, degenerate_bases_found (IUPAC codes like Y, R, N).
+    3. open_reading_frames: array of major genes/ORFs detected (e.g., gag, pol, env) with estimated regions.
+    4. sequence_features: array of key structural elements (e.g., LTRs, promoters, signal peptides, active sites).
+    5. clinical_or_biological_relevance: string with brief summary of pathogenic, evolutionary, or research significance.
+    6. quality_warnings: array of any potential issues (e.g., frame shifts, premature stop codons, high ambiguity density).
+    """
+    
+    max_attempts = 3
+    base_wait = 5
+    
+    for attempt in range(max_attempts):
+        try:
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.1  # Low temperature for precise biological analysis
+                )
+            )
+            
+            result_json = json.loads(response.text)
+            _cache_insight(cache_key, json.dumps(result_json))
+            return result_json
+            
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"Failed to parse Gemini response as JSON: {str(e)}")
+        except Exception as e:
+            error_msg = str(e)
+            if "429" in error_msg or "rate limit" in error_msg.lower():
+                if attempt < max_attempts - 1:
+                    wait_time = base_wait * (2 ** attempt)
+                    print(f"Rate limited (429). Waiting {wait_time}s before retry {attempt + 1}/{max_attempts}...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    raise RuntimeError(
+                        f"Gemini API rate limit exceeded for FASTA analysis. "
+                        f"Please check your API usage at https://console.cloud.google.com or wait before retrying."
+                    )
+            raise RuntimeError(f"Failed to analyze FASTA sequence: {error_msg}")
+    
+    raise RuntimeError(f"Failed to analyze FASTA sequence after {max_attempts} attempts")
 
 
 def get_insights(kpi_summary: dict, extra_context: str = "", provider: str = "gemini", api_key: Optional[str] = None) -> str:
