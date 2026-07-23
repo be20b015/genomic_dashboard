@@ -14,8 +14,6 @@ import time
 from typing import Optional
 
 import requests
-from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
 
 SYSTEM_INSTRUCTION = (
     "You are a genomics analyst. Analyze the given genomic KPIs and "
@@ -24,25 +22,6 @@ SYSTEM_INSTRUCTION = (
     "anomalies or regulatory features. Be concise and avoid overclaiming "
     "clinical significance from summary statistics alone."
 )
-
-
-def _create_session_with_retries(max_retries: int = 3, backoff_factor: float = 1.0) -> requests.Session:
-    """Create a requests session with exponential backoff retry strategy."""
-    session = requests.Session()
-    
-    # Configure retry strategy for 429 (Too Many Requests) and other transient errors
-    retry_strategy = Retry(
-        total=max_retries,
-        backoff_factor=backoff_factor,
-        status_forcelist=[429, 500, 502, 503, 504],  # Retry on these status codes
-        allowed_methods=["POST", "GET"],
-    )
-    
-    adapter = HTTPAdapter(max_retries=retry_strategy)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    
-    return session
 
 
 def _build_prompt(kpi_summary: dict, extra_context: str = "") -> str:
@@ -84,34 +63,39 @@ def get_insights_gemini(kpi_summary: dict, extra_context: str = "", api_key: Opt
         "contents": [{"parts": [{"text": prompt}]}],
     }
     
-    session = _create_session_with_retries(max_retries=5, backoff_factor=2.0)
     max_attempts = 5
-    attempt = 0
+    base_wait = 2  # Start with 2 second wait
     
-    while attempt < max_attempts:
+    for attempt in range(max_attempts):
         try:
-            resp = session.post(url, json=payload, timeout=30)
+            resp = requests.post(url, json=payload, timeout=30)
             resp.raise_for_status()
             data = resp.json()
             return data["candidates"][0]["content"]["parts"][0]["text"]
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 429:
-                # Extract retry-after header if available
-                retry_after = e.response.headers.get("Retry-After")
-                if retry_after:
-                    wait_time = int(retry_after)
-                else:
-                    # Exponential backoff: 2^attempt seconds
-                    wait_time = min(2 ** attempt, 32)
-                
-                attempt += 1
-                if attempt < max_attempts:
-                    print(f"Rate limited. Waiting {wait_time}s before retry {attempt}/{max_attempts}...")
+                if attempt < max_attempts - 1:
+                    # Check for Retry-After header
+                    retry_after = e.response.headers.get("Retry-After")
+                    if retry_after:
+                        wait_time = int(retry_after)
+                    else:
+                        # Exponential backoff: 2, 4, 8, 16 seconds
+                        wait_time = base_wait * (2 ** attempt)
+                    
+                    print(f"Rate limited (429). Waiting {wait_time}s before retry {attempt + 1}/{max_attempts}...")
                     time.sleep(wait_time)
                     continue
-            raise
+                else:
+                    raise RuntimeError(
+                        f"API rate limit exceeded after {max_attempts} retries. "
+                        "Please wait a few minutes and try again."
+                    )
+            raise RuntimeError(f"Gemini API error: {e.response.status_code} - {e.response.text}")
+        except requests.exceptions.Timeout:
+            raise RuntimeError("Gemini API request timed out (30s)")
         except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Failed to get AI insights from Gemini: {str(e)}")
+            raise RuntimeError(f"Failed to connect to Gemini API: {str(e)}")
     
     raise RuntimeError(f"Failed to get AI insights after {max_attempts} attempts")
 
@@ -135,34 +119,39 @@ def get_insights_claude(kpi_summary: dict, extra_context: str = "", api_key: Opt
         "messages": [{"role": "user", "content": prompt}],
     }
     
-    session = _create_session_with_retries(max_retries=5, backoff_factor=2.0)
     max_attempts = 5
-    attempt = 0
+    base_wait = 2  # Start with 2 second wait
     
-    while attempt < max_attempts:
+    for attempt in range(max_attempts):
         try:
-            resp = session.post(url, headers=headers, json=payload, timeout=30)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             resp.raise_for_status()
             data = resp.json()
             return "".join(block["text"] for block in data["content"] if block["type"] == "text")
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 429:
-                # Extract retry-after header if available
-                retry_after = e.response.headers.get("Retry-After")
-                if retry_after:
-                    wait_time = int(retry_after)
-                else:
-                    # Exponential backoff: 2^attempt seconds
-                    wait_time = min(2 ** attempt, 32)
-                
-                attempt += 1
-                if attempt < max_attempts:
-                    print(f"Rate limited. Waiting {wait_time}s before retry {attempt}/{max_attempts}...")
+                if attempt < max_attempts - 1:
+                    # Check for Retry-After header
+                    retry_after = e.response.headers.get("Retry-After")
+                    if retry_after:
+                        wait_time = int(retry_after)
+                    else:
+                        # Exponential backoff: 2, 4, 8, 16 seconds
+                        wait_time = base_wait * (2 ** attempt)
+                    
+                    print(f"Rate limited (429). Waiting {wait_time}s before retry {attempt + 1}/{max_attempts}...")
                     time.sleep(wait_time)
                     continue
-            raise
+                else:
+                    raise RuntimeError(
+                        f"API rate limit exceeded after {max_attempts} retries. "
+                        "Please wait a few minutes and try again."
+                    )
+            raise RuntimeError(f"Claude API error: {e.response.status_code} - {e.response.text}")
+        except requests.exceptions.Timeout:
+            raise RuntimeError("Claude API request timed out (30s)")
         except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Failed to get AI insights from Claude: {str(e)}")
+            raise RuntimeError(f"Failed to connect to Claude API: {str(e)}")
     
     raise RuntimeError(f"Failed to get AI insights after {max_attempts} attempts")
 
