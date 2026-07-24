@@ -20,6 +20,9 @@ embeddings and LLM-generated plain-language insights.
   so weights load once per server process.
 - **AI Insights** — sends KPI summaries to Gemini or Claude for a
   plain-language biological interpretation.
+- **FASTA Sequence Analysis** — analyze individual DNA sequences with
+  Gemini API to get structured JSON output including metadata, ORFs,
+  features, and quality warnings.
 - **FastAPI backend** — decouples heavy inference from the UI process,
   with a minimal role-based access control example and audit logging
   scaffold (a starting point toward 21 CFR Part 11-style logging, not
@@ -36,7 +39,7 @@ genomic_dashboard/
 │   ├── parser.py            # streaming FASTA/FASTQ parsing
 │   ├── kpis.py               # running KPI aggregation
 │   ├── model.py               # GFM loading + embedding extraction
-│   └── ai_insights.py          # Gemini/Claude KPI summarization
+│   └── ai_insights.py          # Gemini/Claude KPI summarization + FASTA analysis
 ├── components/
 │   ├── seqviz.py             # linear/circular sequence viewer (CDN JS)
 │   └── ngl_viewer.py          # 3D structure viewer (CDN JS)
@@ -94,8 +97,24 @@ export GEMINI_API_KEY=your-key      # for the Gemini provider
 export ANTHROPIC_API_KEY=your-key   # for the Claude provider
 ```
 
-Pick the provider in the sidebar, then click "Generate plain-language
-summary" under AI Insights.
+Pick the provider in the sidebar. You can then:
+
+1. **Generate KPI Summary** — click to get a plain-language interpretation of the overall dataset KPIs (gc content, record count, etc.)
+2. **Analyze Individual Sequence** — select a specific sequence from the dropdown and analyze it with Gemini API to get structured output including metadata, ORFs (open reading frames), sequence features, and quality warnings.
+
+**Note**: FASTA sequence analysis requires the `google-genai` package. Install it with:
+
+```bash
+pip install google-genai
+```
+
+The analysis results include:
+- Sequence metadata (organism guess, genome type, length)
+- Nucleotide composition (GC content, ambiguous bases)
+- ORFs detected (gag, pol, env, etc.)
+- Sequence features (LTRs, promoters, signal peptides)
+- Clinical/biological relevance
+- Quality warnings (frame shifts, stop codons, etc.)
 
 ### Running the FastAPI backend separately (optional)
 

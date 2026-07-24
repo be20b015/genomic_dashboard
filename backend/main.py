@@ -94,6 +94,19 @@ class KPIRequest(BaseModel):
     sequences: List[str]
 
 
+class AIInsightRequest(BaseModel):
+    kpi_summary: dict
+    extra_context: str = ""
+    provider: str = "gemini"
+    api_key: Optional[str] = None
+
+
+class FASTAAnalysisRequest(BaseModel):
+    fasta_header: str
+    dna_sequence: str
+    api_key: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -131,3 +144,49 @@ def kpis(req: KPIRequest, role: str = Depends(require_permission("read_kpis"))):
 
     audit_log("read_kpis", role, detail=f"n_sequences={len(req.sequences)}")
     return running.summary_dict()
+
+
+@app.post("/ai_insights")
+def ai_insights(req: AIInsightRequest, role: str = Depends(require_permission("read_kpis"))):
+    """Generate plain-language summary of KPIs using Gemini or Claude."""
+    from core.ai_insights import get_insights
+
+    start = time.perf_counter()
+    result = get_insights(
+        req.kpi_summary,
+        extra_context=req.extra_context,
+        provider=req.provider,
+        api_key=req.api_key
+    )
+    latency_ms = (time.perf_counter() - start) * 1000
+
+    audit_log("ai_insights", role, detail=f"provider={req.provider} latency_ms={latency_ms:.0f}")
+
+    return {
+        "insights": result,
+        "provider": req.provider,
+        "latency_ms": round(latency_ms, 2)
+    }
+
+
+@app.post("/fasta_analysis")
+def fasta_analysis(req: FASTAAnalysisRequest, role: str = Depends(require_permission("read_kpis"))):
+    """Analyze a FASTA DNA sequence using Gemini API with structured JSON output."""
+    from core.ai_insights import analyze_fasta_sequence
+
+    start = time.perf_counter()
+    result = analyze_fasta_sequence(
+        req.fasta_header,
+        req.dna_sequence,
+        api_key=req.api_key
+    )
+    latency_ms = (time.perf_counter() - start) * 1000
+
+    audit_log("fasta_analysis", role, detail=f"sequence_length={len(req.dna_sequence)} latency_ms={latency_ms:.0f}")
+
+    return {
+        "analysis": result,
+        "sequence_header": req.fasta_header,
+        "sequence_length": len(req.dna_sequence),
+        "latency_ms": round(latency_ms, 2)
+    }

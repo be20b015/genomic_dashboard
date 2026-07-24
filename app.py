@@ -297,17 +297,74 @@ if enable_ai:
 # AI Insights (Gemini / Claude summary of KPIs)
 # ---------------------------------------------------------------------------
 st.subheader("AI Insights")
-if st.button("Generate plain-language summary"):
-    with st.spinner(f"Asking {provider} for an interpretation…"):
-        try:
-            from core.ai_insights import get_insights
+ai_col1, ai_col2 = st.columns(2)
 
-            text = get_insights(summary, provider=provider, api_key=provider_api_key)
-            st.markdown(text)
-        except RuntimeError as e:
-            st.warning(
-                f"{e}. Store the key securely in Streamlit secrets or as an environment variable "
-                "before running the app."
-            )
-        except Exception as e:
-            st.error(f"AI insights request failed: {e}")
+with ai_col1:
+    if st.button("Generate KPI Summary", key="kpi_summary"):
+        with st.spinner(f"Asking {provider} for an interpretation…"):
+            try:
+                from core.ai_insights import get_insights
+
+                text = get_insights(summary, provider=provider, api_key=provider_api_key)
+                st.markdown(text)
+            except RuntimeError as e:
+                st.warning(
+                    f"{e}. Store the key securely in Streamlit secrets or as an environment variable "
+                    "before running the app."
+                )
+            except Exception as e:
+                st.error(f"AI insights request failed: {e}")
+
+with ai_col2:
+    if st.button("Analyze Individual Sequence", key="fasta_analysis"):
+        if records_for_viewer:
+            viewer_ids = [r.id for r in records_for_viewer]
+            analysis_id = st.selectbox("Select sequence to analyze", viewer_ids, key="analyze_select")
+            analysis_record = next(r for r in records_for_viewer if r.id == analysis_id)
+            
+            with st.spinner(f"Analyzing sequence {analysis_id} with Gemini…"):
+                try:
+                    from core.ai_insights import analyze_fasta_sequence
+                    
+                    result = analyze_fasta_sequence(analysis_id, analysis_record.sequence, api_key=provider_api_key)
+                    
+                    st.json(result)
+                    
+                    # Display readable summary
+                    with st.expander("📋 Sequence Analysis Summary", expanded=True):
+                        if "sequence_metadata" in result:
+                            st.write("**Sequence Metadata:**")
+                            st.write(result["sequence_metadata"])
+                        
+                        if "nucleotide_composition" in result:
+                            st.write("**Nucleotide Composition:**")
+                            st.write(result["nucleotide_composition"])
+                        
+                        if "open_reading_frames" in result:
+                            st.write("**Open Reading Frames:**")
+                            for orf in result["open_reading_frames"]:
+                                st.write(f"- {orf}")
+                        
+                        if "sequence_features" in result:
+                            st.write("**Sequence Features:**")
+                            for feature in result["sequence_features"]:
+                                st.write(f"- {feature}")
+                        
+                        if "clinical_or_biological_relevance" in result:
+                            st.write("**Clinical/Biological Relevance:**")
+                            st.write(result["clinical_or_biological_relevance"])
+                        
+                        if "quality_warnings" in result and result["quality_warnings"]:
+                            st.warning("**Quality Warnings:**")
+                            for warning in result["quality_warnings"]:
+                                st.write(f"⚠️ {warning}")
+                
+                except RuntimeError as e:
+                    st.warning(
+                        f"{e}. Store the key securely in Streamlit secrets or as an environment variable "
+                        "before running the app."
+                    )
+                except Exception as e:
+                    st.error(f"FASTA sequence analysis failed: {e}")
+        else:
+            st.info("No sequences available to analyze. Upload a file first.")
