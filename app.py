@@ -42,7 +42,6 @@ def _load_runtime_secrets() -> None:
     preferred_values = {
         "AWS_ACCESS_KEY_ID": _get_secret("AWS_ACCESS_KEY_ID"),
         "AWS_SECRET_ACCESS_KEY": _get_secret("AWS_SECRET_ACCESS_KEY"),
-        "AWS_SESSION_TOKEN": _get_secret("AWS_SESSION_TOKEN"),
         "AWS_REGION": _get_secret("AWS_REGION", "us-east-1"),
         "BEDROCK_CLAUDE_MODEL_ID": _get_secret(
             "BEDROCK_CLAUDE_MODEL_ID",
