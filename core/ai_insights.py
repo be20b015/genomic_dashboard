@@ -1,17 +1,12 @@
 """
-Clean, provider-agnostic AI-insight module for parsed-genome KPIs and
-FASTA sequence analysis.
+AI-insight helpers for parsed-genome KPIs and FASTA sequence analysis.
 
-This trims the original module down to what's actually needed and adds
-a Claude-based structured-JSON analyzer (mirroring the Gemini one) plus
-a markdown formatter that renders the same clean, numbered-section
-layout you get from a good structured response.
+The implementation uses Amazon Bedrock Claude for both plain-language KPI
+summaries and structured FASTA sequence analysis. Authentication uses the
+standard AWS credential chain (environment variables, shared credentials,
+or an IAM role), so no direct Anthropic API key is required.
 
-Claude is called via Amazon Bedrock (boto3), not the direct Anthropic
-API — so auth is standard AWS credentials (env vars, ~/.aws/credentials,
-an IAM role, etc.), not an ANTHROPIC_API_KEY.
-
-Requires: boto3  (pip install boto3)
+Requires: boto3
 """
 
 from __future__ import annotations
@@ -34,10 +29,29 @@ BEDROCK_REGION = os.environ.get("AWS_REGION", "us-east-1")
 _bedrock_client = None
 
 
-def _get_bedrock_client():
+def _get_bedrock_client(
+    aws_access_key_id: Optional[str] = None,
+    aws_secret_access_key: Optional[str] = None,
+    aws_session_token: Optional[str] = None,
+):
     global _bedrock_client
     if _bedrock_client is None:
-        _bedrock_client = boto3.client("bedrock-runtime", region_name=BEDROCK_REGION)
+        client_kwargs = {"region_name": BEDROCK_REGION}
+        aws_access_key_id = aws_access_key_id or os.getenv("AWS_ACCESS_KEY_ID")
+        aws_secret_access_key = aws_secret_access_key or os.getenv("AWS_SECRET_ACCESS_KEY")
+        aws_session_token = aws_session_token or os.getenv("AWS_SESSION_TOKEN")
+
+        if aws_access_key_id and aws_secret_access_key:
+            client_kwargs.update(
+                {
+                    "aws_access_key_id": aws_access_key_id,
+                    "aws_secret_access_key": aws_secret_access_key,
+                }
+            )
+            if aws_session_token:
+                client_kwargs["aws_session_token"] = aws_session_token
+
+        _bedrock_client = boto3.client("bedrock-runtime", **client_kwargs)
     return _bedrock_client
 
 
@@ -89,12 +103,18 @@ def _throttle(provider: str) -> None:
 
 def _invoke_claude_bedrock(system: Optional[str], user_content: str, max_tokens: int,
                             temperature: float = 1.0, max_attempts: int = 3,
-                            base_wait: int = 5) -> str:
+                            base_wait: int = 5, aws_access_key_id: Optional[str] = None,
+                            aws_secret_access_key: Optional[str] = None,
+                            aws_session_token: Optional[str] = None) -> str:
     """
     Call Claude on Bedrock via invoke_model, with exponential-backoff retry
     on throttling. Returns the concatenated text of the response.
     """
-    client = _get_bedrock_client()
+    client = _get_bedrock_client(
+        aws_access_key_id=aws_access_key_id,
+        aws_secret_access_key=aws_secret_access_key,
+        aws_session_token=aws_session_token,
+    )
 
     body = {
         "anthropic_version": "bedrock-2023-05-31",
@@ -137,7 +157,7 @@ def _build_prompt(kpi_summary: dict, extra_context: str = "") -> str:
     return prompt
 
 
-def get_insights_claude(kpi_summary: dict, extra_context: str = "") -> str:
+def get_insights_claude(kpi_summary: dict, extra_context: str = "", api_key: Optional[str] = None) -> str:
     key = _cache_key("claude", str(sorted(kpi_summary.items())), extra_context)
     cached = _get_cached(key)
     if cached:
@@ -155,9 +175,8 @@ def get_insights_claude(kpi_summary: dict, extra_context: str = "") -> str:
 
 
 # --------------------------------------------------------------------------
-# Structured FASTA analysis via Claude (mirrors the Gemini structured-JSON
-# version, but returns the exact same schema so downstream code doesn't
-# need to branch on provider)
+# Structured FASTA analysis via Claude returns a stable JSON schema so
+# downstream code does not need to branch on provider.
 # --------------------------------------------------------------------------
 
 _FASTA_SCHEMA_PROMPT = """\
@@ -192,10 +211,9 @@ Sequence: {sequence}
 """
 
 
-def analyze_fasta_sequence_claude(fasta_header: str, dna_sequence: str) -> dict:
+def analyze_fasta_sequence_claude(fasta_header: str, dna_sequence: str, api_key: Optional[str] = None) -> dict:
     """
-    Structured JSON annotation of a FASTA sequence via Claude on Bedrock,
-    matching the same schema as the Gemini-based analyze_fasta_sequence().
+    Structured JSON annotation of a FASTA sequence via Claude on Bedrock.
     """
     key = _cache_key("fasta-claude", fasta_header, dna_sequence[:500])
     cached = _get_cached(key, max_age=7200)
@@ -303,18 +321,18 @@ def format_fasta_analysis_markdown(result: dict, sequence_label: str = "sequence
 # Unified entry points
 # --------------------------------------------------------------------------
 
-def get_insights(kpi_summary: dict, extra_context: str = "", provider: str = "claude") -> str:
-    if provider == "claude":
-        return get_insights_claude(kpi_summary, extra_context)
-    raise ValueError(f"Unknown provider: {provider}")
+def get_insights(kpi_summary: dict, extra_context: str = "", provider: str = "claude", api_key: Optional[str] = None) -> str:
+    if provider not in {"claude", "bedrock"}:
+        raise ValueError(f"Unknown provider: {provider}")
+    return get_insights_claude(kpi_summary, extra_context, api_key=api_key)
 
 
-def analyze_fasta_sequence(fasta_header: str, dna_sequence: str, as_markdown: bool = False):
+def analyze_fasta_sequence(fasta_header: str, dna_sequence: str, as_markdown: bool = False, api_key: Optional[str] = None):
     """
     Structured FASTA analysis via Claude on Bedrock. Returns a dict by
     default, or a clean markdown string if as_markdown=True.
     """
-    result = analyze_fasta_sequence_claude(fasta_header, dna_sequence)
+    result = analyze_fasta_sequence_claude(fasta_header, dna_sequence, api_key=api_key)
     if as_markdown:
         return format_fasta_analysis_markdown(result, sequence_label=fasta_header)
     return result

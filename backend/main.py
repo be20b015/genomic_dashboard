@@ -97,7 +97,7 @@ class KPIRequest(BaseModel):
 class AIInsightRequest(BaseModel):
     kpi_summary: dict
     extra_context: str = ""
-    provider: str = "gemini"
+    provider: str = "claude"
     api_key: Optional[str] = None
 
 
@@ -148,7 +148,7 @@ def kpis(req: KPIRequest, role: str = Depends(require_permission("read_kpis"))):
 
 @app.post("/ai_insights")
 def ai_insights(req: AIInsightRequest, role: str = Depends(require_permission("read_kpis"))):
-    """Generate plain-language summary of KPIs using Gemini or Claude."""
+    """Generate plain-language KPI summaries with Amazon Bedrock Claude."""
     from core.ai_insights import get_insights
 
     start = time.perf_counter()
@@ -171,7 +171,7 @@ def ai_insights(req: AIInsightRequest, role: str = Depends(require_permission("r
 
 @app.post("/fasta_analysis")
 def fasta_analysis(req: FASTAAnalysisRequest, role: str = Depends(require_permission("read_kpis"))):
-    """Analyze a FASTA DNA sequence using Gemini API with structured JSON output."""
+    """Analyze a FASTA DNA sequence with Amazon Bedrock Claude using structured JSON output."""
     from core.ai_insights import analyze_fasta_sequence
 
     start = time.perf_counter()

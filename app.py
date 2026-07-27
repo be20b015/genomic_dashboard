@@ -37,12 +37,31 @@ def _get_secret(name: str, default: Optional[str] = None) -> Optional[str]:
             return value
     return default
 
+
+def _load_runtime_secrets() -> None:
+    preferred_values = {
+        "AWS_ACCESS_KEY_ID": _get_secret("AWS_ACCESS_KEY_ID"),
+        "AWS_SECRET_ACCESS_KEY": _get_secret("AWS_SECRET_ACCESS_KEY"),
+        "AWS_SESSION_TOKEN": _get_secret("AWS_SESSION_TOKEN"),
+        "AWS_REGION": _get_secret("AWS_REGION", "us-east-1"),
+        "BEDROCK_CLAUDE_MODEL_ID": _get_secret(
+            "BEDROCK_CLAUDE_MODEL_ID",
+            "anthropic.claude-sonnet-4-6-v1:0",
+        ),
+    }
+
+    for key, value in preferred_values.items():
+        if value:
+            os.environ[key] = str(value)
+
+
 from components.ngl_viewer import render_structure
 from components.seqviz import render_seqviz
 from core.kpis import RunningKPIs
 from core.parser import stream_with_progress
 
 st.set_page_config(page_title="Genomic Dashboard", layout="wide", page_icon="🧬")
+_load_runtime_secrets()
 
 # ---------------------------------------------------------------------------
 # Sidebar — file upload & options
@@ -106,27 +125,6 @@ if enable_ai and embedding_mode == "Hosted API (no download)":
             type="password",
             help="Free token from https://huggingface.co/settings/tokens. Stored securely via Streamlit secrets or environment variables.",
         ) or hosted_api_key
-
-provider = st.sidebar.selectbox("AI Insights provider", ["gemini", "claude"], index=0)
-provider_api_key = None
-if provider == "gemini":
-    provider_api_key = _get_secret("GEMINI_API_KEY")
-    provider_api_key = st.sidebar.text_input(
-        "Gemini API key",
-        value=provider_api_key or "",
-        type="password",
-        help="Used for AI insights. Stored securely via Streamlit secrets or environment variables.",
-    ) or provider_api_key
-else:
-    provider_api_key = _get_secret("ANTHROPIC_API_KEY")
-    provider_api_key = st.sidebar.text_input(
-        "Anthropic API key",
-        value=provider_api_key or "",
-        type="password",
-        help="Used for AI insights. Stored securely via Streamlit secrets or environment variables.",
-    ) or provider_api_key
-
-st.sidebar.caption("Tip: place the Hugging Face token in .streamlit/secrets.toml or export it before launching Streamlit.")
 
 st.sidebar.markdown("---")
 uploaded_pdb = st.sidebar.file_uploader(
@@ -294,23 +292,23 @@ if enable_ai:
                     )
 
 # ---------------------------------------------------------------------------
-# AI Insights (Gemini / Claude summary of KPIs)
+# AI Insights (Amazon Bedrock Claude)
 # ---------------------------------------------------------------------------
 st.subheader("AI Insights")
+st.caption("Uses Amazon Bedrock Claude with credentials loaded from Streamlit secrets or your local environment.")
 ai_col1, ai_col2 = st.columns(2)
 
 with ai_col1:
     if st.button("Generate KPI Summary", key="kpi_summary"):
-        with st.spinner(f"Asking {provider} for an interpretation…"):
+        with st.spinner("Asking Amazon Bedrock Claude for an interpretation…"):
             try:
                 from core.ai_insights import get_insights
 
-                text = get_insights(summary, provider=provider, api_key=provider_api_key)
+                text = get_insights(summary, provider="claude")
                 st.markdown(text)
             except RuntimeError as e:
                 st.warning(
-                    f"{e}. Store the key securely in Streamlit secrets or as an environment variable "
-                    "before running the app."
+                    f"{e}. Configure AWS credentials and region before running the app."
                 )
             except Exception as e:
                 st.error(f"AI insights request failed: {e}")
@@ -321,48 +319,46 @@ with ai_col2:
             viewer_ids = [r.id for r in records_for_viewer]
             analysis_id = st.selectbox("Select sequence to analyze", viewer_ids, key="analyze_select")
             analysis_record = next(r for r in records_for_viewer if r.id == analysis_id)
-            
-            with st.spinner(f"Analyzing sequence {analysis_id} with Gemini…"):
+
+            with st.spinner(f"Analyzing sequence {analysis_id} with Amazon Bedrock Claude…"):
                 try:
                     from core.ai_insights import analyze_fasta_sequence
-                    
-                    result = analyze_fasta_sequence(analysis_id, analysis_record.sequence, api_key=provider_api_key)
-                    
+
+                    result = analyze_fasta_sequence(analysis_id, analysis_record.sequence)
+
                     st.json(result)
-                    
-                    # Display readable summary
+
                     with st.expander("📋 Sequence Analysis Summary", expanded=True):
                         if "sequence_metadata" in result:
                             st.write("**Sequence Metadata:**")
                             st.write(result["sequence_metadata"])
-                        
+
                         if "nucleotide_composition" in result:
                             st.write("**Nucleotide Composition:**")
                             st.write(result["nucleotide_composition"])
-                        
+
                         if "open_reading_frames" in result:
                             st.write("**Open Reading Frames:**")
                             for orf in result["open_reading_frames"]:
                                 st.write(f"- {orf}")
-                        
+
                         if "sequence_features" in result:
                             st.write("**Sequence Features:**")
                             for feature in result["sequence_features"]:
                                 st.write(f"- {feature}")
-                        
+
                         if "clinical_or_biological_relevance" in result:
                             st.write("**Clinical/Biological Relevance:**")
                             st.write(result["clinical_or_biological_relevance"])
-                        
+
                         if "quality_warnings" in result and result["quality_warnings"]:
                             st.warning("**Quality Warnings:**")
                             for warning in result["quality_warnings"]:
                                 st.write(f"⚠️ {warning}")
-                
+
                 except RuntimeError as e:
                     st.warning(
-                        f"{e}. Store the key securely in Streamlit secrets or as an environment variable "
-                        "before running the app."
+                        f"{e}. Configure AWS credentials and region before running the app."
                     )
                 except Exception as e:
                     st.error(f"FASTA sequence analysis failed: {e}")

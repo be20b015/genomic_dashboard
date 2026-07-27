@@ -18,11 +18,11 @@ embeddings and LLM-generated plain-language insights.
 - **Genomic Foundation Model embeddings** — optional DNABERT-2
   integration via Hugging Face `transformers`, cached as a singleton
   so weights load once per server process.
-- **AI Insights** — sends KPI summaries to Gemini or Claude for a
+- **AI Insights** — sends KPI summaries to Amazon Bedrock Claude for a
   plain-language biological interpretation.
 - **FASTA Sequence Analysis** — analyze individual DNA sequences with
-  Gemini API to get structured JSON output including metadata, ORFs,
-  features, and quality warnings.
+  Amazon Bedrock Claude to get structured JSON output including metadata,
+  ORFs, features, and quality warnings.
 - **FastAPI backend** — decouples heavy inference from the UI process,
   with a minimal role-based access control example and audit logging
   scaffold (a starting point toward 21 CFR Part 11-style logging, not
@@ -39,7 +39,7 @@ genomic_dashboard/
 │   ├── parser.py            # streaming FASTA/FASTQ parsing
 │   ├── kpis.py               # running KPI aggregation
 │   ├── model.py               # GFM loading + embedding extraction
-│   └── ai_insights.py          # Gemini/Claude KPI summarization + FASTA analysis
+│   └── ai_insights.py          # Bedrock Claude KPI summarization + FASTA analysis
 ├── components/
 │   ├── seqviz.py             # linear/circular sequence viewer (CDN JS)
 │   └── ngl_viewer.py          # 3D structure viewer (CDN JS)
@@ -90,23 +90,19 @@ export HF_TOKEN=your-token   # optional: pre-set instead of pasting in the sideb
 
 ### Enabling AI Insights
 
-Set one of these environment variables before launching:
+Configure your AWS credentials and region before launching:
 
 ```bash
-export GEMINI_API_KEY=your-key      # for the Gemini provider
-export ANTHROPIC_API_KEY=your-key   # for the Claude provider
+export AWS_ACCESS_KEY_ID=your-key
+export AWS_SECRET_ACCESS_KEY=your-secret
+export AWS_SESSION_TOKEN=your-session-token   # optional for temporary credentials
+export AWS_REGION=us-east-1
 ```
 
-Pick the provider in the sidebar. You can then:
+You can then:
 
 1. **Generate KPI Summary** — click to get a plain-language interpretation of the overall dataset KPIs (gc content, record count, etc.)
-2. **Analyze Individual Sequence** — select a specific sequence from the dropdown and analyze it with Gemini API to get structured output including metadata, ORFs (open reading frames), sequence features, and quality warnings.
-
-**Note**: FASTA sequence analysis requires the `google-genai` package. Install it with:
-
-```bash
-pip install google-genai
-```
+2. **Analyze Individual Sequence** — select a specific sequence from the dropdown and analyze it with Amazon Bedrock Claude to get structured output including metadata, ORFs (open reading frames), sequence features, and quality warnings.
 
 The analysis results include:
 - Sequence metadata (organism guess, genome type, length)
